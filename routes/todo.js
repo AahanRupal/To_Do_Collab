@@ -1,77 +1,113 @@
 const express = require('express');
-const router = express.Router();
-
-const Todo = require('../models/todo');
+const prisma = require('../prisma/client');
 const validate = require('../Middleware/validate');
 const verifyToken = require('../Middleware/authMiddleware');
 const logger = require('../Middleware/logger');
 const { todoSchema, updateTodoSchema } = require('../schemas/todoSchema');
 
-// Create a new todo (protected + validated)
+const router = express.Router();
+
+// Create a todo (with optional collaborators)
 router.post('/', logger, verifyToken, validate(todoSchema), async (req, res) => {
+  const { title, completed, collaborators } = req.body;
   try {
-    const todo = new Todo({
-      title: req.body.title,
-      completed: req.body.completed || false,
-      user: req.userId,
+    const todo = await prisma.todo.create({
+      data: {
+        title,
+        completed: completed || false,
+        owner: { connect: { id: req.userId } },
+        collaborators: collaborators
+          ? { connect: collaborators.map(id => ({ id })) }
+          : undefined,
+      },
+      include: {
+        collaborators: true,
+        owner: true,
+      },
     });
-    await todo.save();
     res.status(201).json({ status: 'success', data: todo });
   } catch (error) {
     res.status(500).json({ status: 'error', message: error.message });
   }
 });
 
-// Get all todos for the logged-in user
+// Get all todos where user is owner or collaborator
 router.get('/', logger, verifyToken, async (req, res) => {
   try {
-    const todos = await Todo.find({ user: req.userId });
-    res.status(200).json({ status: 'success', data: todos });
+    const todos = await prisma.todo.findMany({
+      where: {
+        OR: [
+          { ownerId: req.userId },
+          { collaborators: { some: { id: req.userId } } },
+        ],
+      },
+      include: {
+        collaborators: true,
+        owner: true,
+      },
+    });
+    res.json({ data: todos });
   } catch (error) {
-    res.status(500).json({ status: 'error', message: error.message });
+    res.status(500).json({ error: error.message });
   }
 });
 
-// Get a single todo (only if it belongs to the user)
+// Get a single todo if user is owner or collaborator
 router.get('/:id', logger, verifyToken, async (req, res) => {
   try {
-    const todo = await Todo.findOne({ _id: req.params.id, user: req.userId });
-    if (!todo) {
-      return res.status(404).json({ status: 'error', message: 'Todo not found' });
-    }
-    res.status(200).json({ status: 'success', data: todo });
+    const todo = await prisma.todo.findFirst({
+      where: {
+        id: parseInt(req.params.id),
+        OR: [
+          { ownerId: req.userId },
+          { collaborators: { some: { id: req.userId } } },
+        ],
+      },
+      include: {
+        collaborators: true,
+        owner: true,
+      },
+    });
+
+    if (!todo) return res.status(404).json({ error: 'Todo not found or access denied' });
+    res.json({ data: todo });
   } catch (error) {
-    res.status(500).json({ status: 'error', message: error.message });
+    res.status(500).json({ error: error.message });
   }
 });
 
-// Update a todo (only user's own todo)
+// Update a todo — only owner can update
 router.put('/:id', logger, verifyToken, validate(updateTodoSchema), async (req, res) => {
   try {
-    const todo = await Todo.findOneAndUpdate(
-      { _id: req.params.id, user: req.userId },
-      req.body,
-      { new: true, runValidators: true }
-    );
-    if (!todo) {
-      return res.status(404).json({ status: 'error', message: 'Todo not found' });
-    }
-    res.status(200).json({ status: 'success', data: todo });
+    const updated = await prisma.todo.updateMany({
+      where: {
+        id: parseInt(req.params.id),
+        ownerId: req.userId,
+      },
+      data: req.body,
+    });
+
+    if (updated.count === 0) return res.status(404).json({ error: 'Todo not found or access denied' });
+    res.json({ message: 'Todo updated successfully' });
   } catch (error) {
-    res.status(500).json({ status: 'error', message: error.message });
+    res.status(500).json({ error: error.message });
   }
 });
 
-// Delete a todo (only user's own todo)
+// Delete a todo — only owner can delete
 router.delete('/:id', logger, verifyToken, async (req, res) => {
   try {
-    const todo = await Todo.findOneAndDelete({ _id: req.params.id, user: req.userId });
-    if (!todo) {
-      return res.status(404).json({ status: 'error', message: 'Todo not found' });
-    }
-    res.status(204).json({ status: 'success', message: 'Todo deleted successfully' });
+    const deleted = await prisma.todo.deleteMany({
+      where: {
+        id: parseInt(req.params.id),
+        ownerId: req.userId,
+      },
+    });
+
+    if (deleted.count === 0) return res.status(404).json({ error: 'Todo not found or access denied' });
+    res.status(204).send();
   } catch (error) {
-    res.status(500).json({ status: 'error', message: error.message });
+    res.status(500).json({ error: error.message });
   }
 });
 
