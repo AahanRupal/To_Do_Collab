@@ -11,19 +11,28 @@ datasource db {
 
 
 model User {
-  id              Int      @id @default(autoincrement())
-  username        String   @unique
+  id              Int               @id @default(autoincrement())
+  username        String            @unique
   password        String
-  todos           Todo[]   @relation("OwnerTodos")
-  sharedTodos     Todo[]   @relation("collaborators")
+  todos           Todo[]            @relation("OwnerTodos")
+  collaborations  Collaborations[]
 }
 
 model Todo {
-  id              Int      @id @default(autoincrement())
+  id              Int               @id @default(autoincrement())
   title           String
-  completed       Boolean  @default(false)
-
-  owner           User?     @relation("OwnerTodos", fields: [ownerId], references: [id])
+  completed       Boolean           @default(false)
+  owner           User?             @relation("OwnerTodos", fields: [ownerId], references: [id])
   ownerId         Int?
-  collaborators   User[]   @relation("collaborators")
+  collaborations  Collaborations[]
+}
+
+model Collaborations {
+  id      Int    @id @default(autoincrement())
+
+  user    User   @relation(fields: [userId], references: [id])
+  userId  Int
+
+  todo    Todo   @relation(fields: [todoId], references: [id])
+  todoId  Int
 }
